@@ -6,8 +6,8 @@ import KeysPage from '@/pages/KeysPage'
 import PlaygroundPage from '@/pages/PlaygroundPage'
 import FallbackPage from '@/pages/FallbackPage'
 import AnalyticsPage from '@/pages/AnalyticsPage'
-import { LoginScreen, useLoginGate } from '@/components/LoginGate'
-import { getStoredSecret } from '@/lib/api'
+import { LoginScreen } from '@/components/LoginGate'
+import { useLoginGate, getStoredSecret } from '@/lib/useLoginGate'
 
 const queryClient = new QueryClient()
 
