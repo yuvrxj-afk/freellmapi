@@ -11,6 +11,7 @@ import { analyticsRouter } from './routes/analytics.js';
 import { healthRouter } from './routes/health.js';
 import { settingsRouter } from './routes/settings.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { dashboardAuth } from './middleware/dashboardAuth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -46,6 +47,9 @@ export function createApp() {
     },
   }));
   app.use(express.json({ limit: '1mb' }));
+
+  // Dashboard auth — must come before all /api/* routes
+  app.use('/api', dashboardAuth);
 
   // API routes
   app.use('/api/keys', keysRouter);

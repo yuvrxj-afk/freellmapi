@@ -6,6 +6,8 @@ import KeysPage from '@/pages/KeysPage'
 import PlaygroundPage from '@/pages/PlaygroundPage'
 import FallbackPage from '@/pages/FallbackPage'
 import AnalyticsPage from '@/pages/AnalyticsPage'
+import { LoginScreen, useLoginGate } from '@/components/LoginGate'
+import { getStoredSecret } from '@/lib/api'
 
 const queryClient = new QueryClient()
 
@@ -67,6 +69,35 @@ function Brand() {
 }
 
 function App() {
+  const { authed, checking, error, check, logout } = useLoginGate()
+
+  // On mount: try the stored secret (or confirm server is open)
+  useEffect(() => {
+    check()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Still verifying stored secret
+  if (authed === null) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <span className="text-sm text-muted-foreground">Loading…</span>
+      </div>
+    )
+  }
+
+  // Not authenticated — show password screen
+  if (!authed) {
+    return (
+      <LoginScreen
+        checking={checking}
+        error={error}
+        onSubmit={(pw) => check(pw)}
+      />
+    )
+  }
+
+  // Authenticated — show the dashboard
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter basename={import.meta.env.BASE_URL}>
@@ -80,8 +111,23 @@ function App() {
                 <NavItem to="/fallback">Fallback</NavItem>
                 <NavItem to="/analytics">Analytics</NavItem>
               </nav>
-              <div className="ml-auto py-2">
+              <div className="ml-auto py-2 flex items-center gap-2">
                 <DarkModeToggle />
+                {/* Only show lock button when a password is actually set */}
+                {getStoredSecret() && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={logout}
+                    aria-label="Lock dashboard"
+                    title="Lock dashboard"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                  </Button>
+                )}
               </div>
             </div>
           </header>
