@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initEncryptionKey } from '../lib/crypto.js';
+import { initEncryptionKey, encrypt } from '../lib/crypto.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.resolve(__dirname, '../../data/freeapi.db');
@@ -49,6 +49,7 @@ export function initDb(dbPath?: string): Database.Database {
   migrateModelsV12(db);
   migrateModelsV13(db);
   migrateModelsV14(db);
+  seedProviderKeysFromEnv(db);
   ensureUnifiedKey(db);
 
   console.log(`Database initialized at ${resolvedPath}`);
@@ -1263,8 +1264,73 @@ function migrateModelsV14(db: Database.Database) {
   `).run();
 }
 
+/**
+ * Seed provider API keys from environment variables on every startup.
+ *
+ * Maps standard env var names → platform names used in the DB.
+ * Uses INSERT OR REPLACE so re-deploys with the same key are idempotent.
+ * Keys are encrypted before storage (same as dashboard UI flow).
+ *
+ * Add any of these env vars to Render and they'll be live on next deploy
+ * without touching the dashboard:
+ *   GROQ_API_KEY, CEREBRAS_API_KEY, GOOGLE_API_KEY, SAMBANOVA_API_KEY,
+ *   MISTRAL_API_KEY, COHERE_API_KEY, OPENROUTER_API_KEY, GITHUB_API_KEY,
+ *   HUGGINGFACE_API_KEY, CLOUDFLARE_API_KEY, ZHIPU_API_KEY, FIREWORKS_API_KEY
+ */
+const ENV_PROVIDER_MAP: Array<{ env: string; platform: string; label: string }> = [
+  { env: 'GROQ_API_KEY',        platform: 'groq',         label: 'env' },
+  { env: 'CEREBRAS_API_KEY',    platform: 'cerebras',     label: 'env' },
+  { env: 'GOOGLE_API_KEY',      platform: 'google',       label: 'env' },
+  { env: 'SAMBANOVA_API_KEY',   platform: 'sambanova',    label: 'env' },
+  { env: 'MISTRAL_API_KEY',     platform: 'mistral',      label: 'env' },
+  { env: 'COHERE_API_KEY',      platform: 'cohere',       label: 'env' },
+  { env: 'OPENROUTER_API_KEY',  platform: 'openrouter',   label: 'env' },
+  { env: 'GITHUB_API_KEY',      platform: 'github',       label: 'env' },
+  { env: 'HUGGINGFACE_API_KEY', platform: 'huggingface',  label: 'env' },
+  { env: 'CLOUDFLARE_API_KEY',  platform: 'cloudflare',   label: 'env' },
+  { env: 'ZHIPU_API_KEY',       platform: 'zhipu',        label: 'env' },
+  { env: 'FIREWORKS_API_KEY',   platform: 'fireworks',    label: 'env' },
+];
+
+function seedProviderKeysFromEnv(db: Database.Database) {
+  let seeded = 0;
+  for (const { env, platform, label } of ENV_PROVIDER_MAP) {
+    const value = process.env[env]?.trim();
+    if (!value) continue;
+    const { encrypted, iv, authTag } = encrypt(value);
+    // Upsert by (platform, label='env') — idempotent on re-deploy
+    const existing = db.prepare(
+      "SELECT id FROM api_keys WHERE platform = ? AND label = ?"
+    ).get(platform, label) as { id: number } | undefined;
+    if (existing) {
+      db.prepare(
+        "UPDATE api_keys SET encrypted_key = ?, iv = ?, auth_tag = ?, status = 'unknown', enabled = 1 WHERE id = ?"
+      ).run(encrypted, iv, authTag, existing.id);
+    } else {
+      db.prepare(
+        "INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled) VALUES (?, ?, ?, ?, ?, 'unknown', 1)"
+      ).run(platform, label, encrypted, iv, authTag);
+    }
+    seeded++;
+  }
+  if (seeded > 0) console.log(`  Seeded ${seeded} provider key(s) from environment variables.`);
+}
+
 function ensureUnifiedKey(db: Database.Database) {
   const existing = db.prepare("SELECT value FROM settings WHERE key = 'unified_api_key'").get() as { value: string } | undefined;
+
+  // If FREELLMAPI_KEY env var is set, always use it (ensures stable key across redeploys)
+  const envKey = process.env.FREELLMAPI_KEY?.trim();
+  if (envKey) {
+    if (!existing) {
+      db.prepare("INSERT INTO settings (key, value) VALUES ('unified_api_key', ?)").run(envKey);
+    } else if (existing.value !== envKey) {
+      db.prepare("UPDATE settings SET value = ? WHERE key = 'unified_api_key'").run(envKey);
+    }
+    console.log(`  Your unified API key: ${envKey}`);
+    return;
+  }
+
   if (!existing) {
     const key = `freellmapi-${crypto.randomBytes(24).toString('hex')}`;
     db.prepare("INSERT INTO settings (key, value) VALUES ('unified_api_key', ?)").run(key);
